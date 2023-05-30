@@ -8,7 +8,7 @@ contract Spectrum {
         Installed,
         Monitored,
         UnderMaintenance,
-        Dismantled, // Keep historic record of power station
+        Dismantled, // Keep historic record of power stations
         Online
     }
 
@@ -16,14 +16,10 @@ contract Spectrum {
         Solar,
         Geothermal,
         Wind,
-        Biomass,
         Biofuels,
         Hydropower,
-        Electricity,
         Nuclear,
         Coal,
-        Lignite,
-        NaturalGas,
         Diesel,
         Hydrocarbon
     }
@@ -34,10 +30,16 @@ contract Spectrum {
     }
 
     struct PowerStation {
+        uint256 stationId;
         Coordinates location;
 
         uint256 installedCapacity;
         uint256 sellCapacity;
+
+        // only settable by the power authoritie
+        uint256 currentSurcharge;
+        bool surchargeIsSet; 
+
         uint256 targetReserveCapacity;
 
         uint256 pricePerMW;
@@ -62,6 +64,7 @@ contract Spectrum {
     // map station id to station struct
     // use sql server for indexing / ownership / filtering
     mapping(uint256 => PowerStation) private powerStations;
+    //PowerStation[] private powerStations;
 
     // map station hash to station service record array
     mapping(uint256 => StationRecord[]) private serviceRecords;
@@ -69,7 +72,7 @@ contract Spectrum {
     mapping(address => bool) private whitelist;
 
     // contract owner
-    address private _contractOwner;
+    address private _powerAuthority; // power authoritie
 
     // Events
     event StationStateChanged(uint256 _stationId, StationState _stationState);
@@ -86,23 +89,29 @@ contract Spectrum {
 
     event WhiteListUpdated(address _newAddress,bool _status);
 
+    event UpdateSurcharge(uint256 _stationId, uint256 _newSurcharge);
+
     constructor() {
-        _contractOwner = msg.sender;
+        _powerAuthority = msg.sender;
     }
 
     // Modifiers
-    modifier onlyContractOwner() {
-        require(_contractOwner == msg.sender,"Your not contract owner");
+    modifier onlyPowerAuthority() {
+        require(_powerAuthority == msg.sender,"Your not contract owner");
+        _;
+    }
+
+    modifier stationExist(uint256 _stationId) {
+        require(stationId >= _stationId, "Station Id dosn't exist");
         _;
     }
 
     modifier onlyStationOwner(uint256 _stationId) {
-        require(powerStations[_stationId].organization != msg.sender,"Your are not station owner");
+        require(powerStations[_stationId].organization == msg.sender,"Your are not station owner");
         _;
     }
 
     modifier isSenderWhiteListed() {
-        //require(whitelist[msg.sender] == 0,"Sender not white listed");
         require(whitelist[msg.sender],"Sender not white listed");
         _;
     }
@@ -112,8 +121,9 @@ contract Spectrum {
     view
     returns(address)
     {
-        return(_contractOwner);
+        return(_powerAuthority);
     }
+
 
     /**
      * @dev get array of stations 
@@ -124,7 +134,7 @@ contract Spectrum {
      * array of PowerStations
      */
     function getStations(uint256 _startStationIndex,uint256 _amountOfStations)
-    public 
+    public
     view
     returns(PowerStation[] memory)
     {
@@ -132,7 +142,6 @@ contract Spectrum {
         require(_amountOfStations != 0,"Station amount cannot be zero");
 
         uint256 newIndex = 0;
-
         PowerStation[] memory tempList = new PowerStation[](_amountOfStations);
 
         for(uint i = 0;i < _amountOfStations; i++){
@@ -142,20 +151,21 @@ contract Spectrum {
         return (tempList);
     }
 
+
     /**
-     * @dev allows contract owner to whitelist address
+     * @dev allows power authority to whitelist address
+     *
      */
     function setWhiteList(address _account, bool _isWhiteListed)
     public
-    onlyContractOwner()
+    onlyPowerAuthority()
     {
         whitelist[_account] = _isWhiteListed;
         emit WhiteListUpdated(_account,_isWhiteListed);
     }
 
-
     /**
-     * @dev allows contract owner to whitelist address
+     * @dev allows power authority to whitelist address
      *
      */
     function isWhiteListed(address _account)
@@ -182,7 +192,7 @@ contract Spectrum {
      */
     function getStationAmount()
     public
-    view 
+    view
     returns(uint256)
     {
         return(stationId);
@@ -191,9 +201,16 @@ contract Spectrum {
 /************** Station Creation ***************/
 
     /**
-     * @dev allows contract owner to add a new power stations
+     * @dev allows whitelist address to add a new power stations
      * 
-     * Could add whitelist of verified address for adding power stations
+     * @param _lat latitude of station location
+     * @param _long  longitude of station location
+     * @param _installCapacity station install power capacity (MW)
+     * @param _sellCapacity station sell power capacity (MW)
+     * @param _pricePerMW  station price per MW
+     * @param _generationType station genration type
+     * @param _state init station state
+     * 
      */
     function addStation(
                         uint256 _lat, 
@@ -223,20 +240,44 @@ contract Spectrum {
         ps.generationType = _generationType;
         ps.state = _state;
         ps.organization = msg.sender;
-
+        ps.stationId = stationId;
         // create power station id -> hash of power station
-        // bytes32 powerStationHash = keccak256(abi.encode(ps));
         powerStations[stationId] = ps;
         stationId += 1;
+
         // emit station created event
         emit StationCreated(stationId);
     }
 
-    /************** Station Capacity ***************/
+/************** Station Surcharge ***************/
+
+    /**
+     * @dev allows power authority to set surcharge on stations
+     * 
+     * Note Only callable by the power authority
+     * @param _stationId station id to update 
+     * @param _newSurcharge new surcharge amount
+     * 
+     */
+    function setSurcharge(uint256 _stationId, uint256 _newSurcharge)
+    public
+    onlyPowerAuthority()
+    stationExist(_stationId)
+    {
+        PowerStation memory ps = powerStations[_stationId];
+        ps.currentSurcharge = _newSurcharge;
+        ps.surchargeIsSet = true;
+        powerStations[_stationId] = ps;
+        emit UpdateSurcharge(_stationId, _newSurcharge);
+    }
+
+/************** Station Capacity ***************/
 
     /**
      * @dev allows station ownership to be change
      *
+     * @param _stationId station id
+     * @param _newCapacity amount of new capacity 
      */
     function updateStationSellCapacity(
                                         uint256 _stationId,
@@ -244,9 +285,11 @@ contract Spectrum {
                                       )
     public
     onlyStationOwner(_stationId)
+    stationExist(_stationId)
     {
         // get power station
         PowerStation memory ps = powerStations[_stationId];
+        // TODO sell capacity cannot exceed install capacity
         ps.sellCapacity = _newCapacity;
         ps.lastUpdated = block.timestamp;
         powerStations[_stationId] = ps;
@@ -257,25 +300,50 @@ contract Spectrum {
      * @dev allows station capacity to be bought
      *
      * Note Ideally buy capacity would only be used buy trusted entities
+     * @param _stationId station id
+     * @param _amount amount of power to be purchased
      */
     function buyCapacity(uint256 _stationId, uint256 _amount)
     public
     payable
+    stationExist(_stationId)
     {
+
         PowerStation memory ps = powerStations[_stationId];
 
+        // require station surcharge is set by PA
+        require(ps.surchargeIsSet,"Surcharge has not been set");
+
+        // require station has enough capacity
         require(ps.sellCapacity > _amount,"Amount exceeds station sell capacity");
+
+        // Calculate price
+        uint256 surChargeAmount = ps.currentSurcharge * _amount;
+
         uint256 buyAmount = ps.pricePerMW * _amount;
-        require(msg.value >= buyAmount, "Invalid Balance");
+
+        require(msg.value >= (buyAmount + surChargeAmount), "Invalid Balance");
         // owner can not buy there own supply
         require(ps.organization != msg.sender,"Not station owner");
-        
-        ps.sellCapacity -= _amount; // reverts if underflow 
-        ps.lastUpdated = block.timestamp;
-        powerStations[_stationId] = ps; // important to before tranfering
 
+        ps.sellCapacity -= _amount; // reverts if underflow 
+
+        // send eth from buyer to station owner
         (bool sent, bytes memory data) = ps.organization.call{value:buyAmount}("");
-        require(sent, "Failed to send Ether");
+        require(sent, "Failed to send Ether to organization");
+
+        // send eth from buyer to power authority for surcharge 
+        (bool surChargeSent, bytes memory dataSurCharge) = _powerAuthority.call{value:surChargeAmount}("");
+        require(surChargeSent, "Failed to send Ether to owner");
+
+        // send remaining back
+        uint256 returnAmount = msg.value - (surChargeAmount + buyAmount);
+        (bool returnSuccess, bytes memory ret) = msg.sender.call{value:returnAmount}("");
+        require(returnSuccess, "Failed to return to owner");
+        
+        // Update power station
+        ps.lastUpdated = block.timestamp;
+        powerStations[_stationId] = ps;
 
         emit BuyStationCapacity(_stationId, _amount);
     }
@@ -283,12 +351,14 @@ contract Spectrum {
     /**
      * @dev allows station reserve to be change from contract owner
      * Look at docs for additional infomation on this mechanism
-     * Could add incetive on keeping to reserve capacity
+     * Could add incetive on keeping reserve capacity
      */
     function targetReserveCapacity(uint256 _stationId, uint256 _newRate)
     public
     onlyStationOwner(_stationId)
+    stationExist(_stationId)
     {
+        // TODO reserve capacity connot exceed reserve capacity
         PowerStation memory ps = powerStations[_stationId];
         ps.targetReserveCapacity = _newRate;
         ps.lastUpdated = block.timestamp; // update timestamp
@@ -297,20 +367,22 @@ contract Spectrum {
         emit StationTargetReserveCapacityChanged(_stationId, _newRate);
     }
 
-    /*************** Station Service Entry ****************/
+/*************** Station Service Entry ****************/
 
     /**
      * @dev allows station reports to be documented on-chain
      *
+     * @param _stationId station id
+     * @param _reportId url of station report
      */
-    function newServiceEntry(uint256 _stationId, string memory reportId)
+    function newServiceEntry(uint256 _stationId, string memory _reportId)
     public
     onlyStationOwner(_stationId)
+    stationExist(_stationId)
     {
         StationRecord memory sr;
-        sr.report = reportId;
-        sr.reportDate = block.timestamp; // add timestamp 
-
+        sr.report = _reportId;
+        sr.reportDate = block.timestamp; // mark timestamp 
         serviceRecords[_stationId].push(sr);
         // emit new service event
         emit NewServiceEntry(_stationId, serviceRecords[_stationId].length);
@@ -319,13 +391,13 @@ contract Spectrum {
     /**
      * @dev get array of station records
      * 
+     *
      */
     function getRecords(uint256 _stationId,uint256 _startRecordIndex, uint256 _amountOfStations)
     public
     view 
     returns(StationRecord[] memory)
     {
-
         require(serviceRecords[_stationId].length >= _amountOfStations, "Start index cannot surpass record amount");
 
         uint256 newIndex = 0;
@@ -338,14 +410,16 @@ contract Spectrum {
         return (tempList);
     }
     
-    /*************** Station State/Ownership ****************/
+/*************** Station State/Ownership ****************/
 
     /**
      * @dev allows station ownership to be change
+     *
      */
     function changeStationOwner(uint256 _stationId, address _newOwner)
     public
     onlyStationOwner(_stationId)
+    stationExist(_stationId)
     {
         PowerStation memory ps = powerStations[_stationId];
         ps.organization = _newOwner;
@@ -357,11 +431,14 @@ contract Spectrum {
 
 
     /**
-     * @dev allows station ownership to be change 
+     * @dev allows station state to be change 
+     *
+     *
      */
     function changeStationState(uint256 _stationId, StationState _newState)
     public
     onlyStationOwner(_stationId)
+    stationExist(_stationId)
     {
         PowerStation memory ps = powerStations[_stationId];
         ps.state = _newState;

@@ -7,7 +7,8 @@ contract('Power Factory Test', function(accounts) {
 
     const contractOwner = accounts[0];
     const organization = accounts[1];
-    const buyer = accounts[2];
+    const organizationTwo = accounts[2]
+    const buyer = accounts[3];
 
     // station variables
     // [0] == 1 negative coord
@@ -18,7 +19,7 @@ contract('Power Factory Test', function(accounts) {
     // [0] is the index of decimal
     const installCapacity = 260000  // 600.00
     const sellCapactiy = 240000     // 40.00
-    const pricePerMW = 150          // 5.0
+    const pricePerMW = 5          // 5.0
     const generationType = 2        // wind
     const state = 1
 
@@ -71,6 +72,7 @@ contract('Power Factory Test', function(accounts) {
 
         await spectrum.addStation(lat,long,installCapacity,sellCapactiy,pricePerMW,generationType,state,{from:organization});
         var seconds = Math.round(Date.now() / 1000);
+
         const stationAmountAfter = await spectrum.getStationAmount();
         assert.equal(stationAmountAfter,1,"Incorrect station amount after creation");
 
@@ -87,7 +89,7 @@ contract('Power Factory Test', function(accounts) {
         assert.equal(stations[0].state,state,"Incorrect state");
         assert.equal(stations[0].organization,organization,"Incorrect Organization");
     })
-
+   
     it("Testing station capacity", async function() {
         // Whitelist and create station
         await spectrum.setWhiteList(organization,{from:contractOwner});
@@ -95,9 +97,9 @@ contract('Power Factory Test', function(accounts) {
         
         const newRate = 4000 // MW
 
-        await spectrum.targetReserveCapacity(stationId,newRate,{from:contractOwner});
+        await spectrum.targetReserveCapacity(stationId,newRate,{from:organization});
         
-        const stations = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
+        let stations = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
 
         assert.equal(stations[0].targetReserveCapacity,newRate,"Incorrect Target rate");
 
@@ -109,26 +111,42 @@ contract('Power Factory Test', function(accounts) {
         
         const _newSellCapacity = 500
        
-        await spectrum.updateStationSellCapacity(stationId,_newSellCapacity);
+        await spectrum.updateStationSellCapacity(stationId,_newSellCapacity,{from:organization});
 
-        const stations = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
+        let stations = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
 
         assert.equal(stations[0].sellCapacity,_newSellCapacity,"Incorrect Target sell capacity");
     })
+
 
     it("Testing station buy capacity", async function() {
         await spectrum.setWhiteList(organization,{from:contractOwner});
         await spectrum.addStation(lat,long,installCapacity,sellCapactiy,pricePerMW,generationType,state,{from:organization});
 
-        const amountOfEmergy = 10 // 10 MW only whole numbers
+        const surcharge = web3.utils.toWei("2",'ether');
+        await spectrum.setSurcharge(stationId,surcharge,{from:contractOwner});
+
+        // ignore exchange rate between ether and power 
+        const amountOfEmergy = 1 // 10 MW only whole numbers 
         const diff = sellCapactiy - amountOfEmergy;
 
-        const ethAmount = web3.utils.toWei("10", 'ether'); // beyond the scope of supplychain
+        let buyerBalanceBefore = await web3.eth.getBalance(buyer);
 
-        await spectrum.buyCapacity(stationId,amountOfEmergy,{from:buyer, value:ethAmount });
-        const stations = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
-  
-        assert.equal(stations[0].sellCapacity,diff,"Incorrect sell capacity");
+        let ethAmount = web3.utils.toWei("20", 'ether'); // beyond the scope of supplychain
+
+        await spectrum.buyCapacity(stationId,amountOfEmergy,{from:buyer, value:ethAmount});
+        let stations = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
+        
+        let buyerBalanceAfter = await web3.eth.getBalance(buyer);
+
+        let organizationBalance = await web3.eth.getBalance(organization);
+
+        // default balance 100
+        assert.notEqual(organizationBalance, 100,"Incorrect organization balance");
+
+        assert.notEqual(buyerBalanceBefore, buyerBalanceAfter, "Incorrect buyer balance");
+
+        assert.equal(stations[0].sellCapacity, diff ,"Incorrect sell capacity");
     })
 
     it("Testing station service entry", async function() {
@@ -137,7 +155,7 @@ contract('Power Factory Test', function(accounts) {
 
         const reportUrl = "http://report"
 
-        await spectrum.newServiceEntry(stationId,reportUrl);
+        await spectrum.newServiceEntry(stationId,reportUrl,{from:organization});
 
         const recordCount = await spectrum.getRecordCount(stationId);
         assert.equal(recordCount,1,"Station record is incorrect");
@@ -151,12 +169,31 @@ contract('Power Factory Test', function(accounts) {
         assert.equal(records[0].report,reportUrl,"Incorrect report url");
     })
 
-    it("Testing station change ownership ", async function() {
-        
-    })
+    it("Testing station change ownership", async function() {
+        await spectrum.setWhiteList(organization,{from:contractOwner});
+        await spectrum.addStation(lat,long,installCapacity,sellCapactiy,pricePerMW,generationType,state,{from:organization});
 
+        const stations = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
+        assert.equal(stations[0].organization, organization, "Incorrect Station Owner");
+
+        await spectrum.changeStationOwner(stationId,organizationTwo,{from:organization});
+        const stationsTwo = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
+        assert.equal(stationsTwo[0].organization,organizationTwo,"Incorrect Organization Two");
+    })
+    
     it("Testing station change state", async function() {
+        await spectrum.setWhiteList(organization,{from:contractOwner});
+        await spectrum.addStation(lat,long,installCapacity,sellCapactiy,pricePerMW,generationType,state,{from:organization});
 
+        const stations = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
+        console.log(stations);
+
+        assert.equal(stations[0].state, 1, "Incorrect Organization");
+        await spectrum.changeStationState(stationId,1,{from:organization})
+
+        const stationsOne = await spectrum.getStations(startIndex,amountOfStations,{from:organization});
+        console.log(stationsOne);
+
+        assert.equal(stationsOne[0].organization, organizationTwo, "Incorrect Organization Two");
     })
-
 })
